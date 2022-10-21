@@ -1,0 +1,4 @@
+run = "/nix/store/dm0p38fp391cdnzrajdqap0n8rlbbib3-factor-lang-0.98/bin/factor -run=battlesnake -i=battlesnake.image"
+
+[nix]
+channel = "stable-21_11"
