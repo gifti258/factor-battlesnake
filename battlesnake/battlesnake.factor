@@ -1,8 +1,9 @@
 USING: accessors arrays assocs assocs.extras combinators
 furnace.actions furnace.json hashtables http http.server
 http.server.dispatchers io.servers json.reader kernel logging
-math math.order math.vectors namespaces pair-rocket path-finding
-random sequences sequences.extras sequences.product sorting ;
+math math.order math.statistics math.vectors namespaces
+pair-rocket path-finding random sequences sequences.extras
+sequences.product sorting ;
 IN: battlesnake
 
 CONSTANT: config H{
@@ -19,15 +20,17 @@ CONSTANT: moves H{
     { +1 0 } => "right"
 }
 
+CONSTANT: steps 2
+
 TUPLE: snake id length health body ;
 C: <snake> snake
 
 TUPLE: state dim food hazards id damage wrapped? ;
 C: <state> state
 
-: 2of ( json a b -- v ) [ of ] bi-curry@ bi 2array ;
+: 2of ( assoc a b -- v ) [ of ] bi-curry@ bi 2array ; inline
 
-: pos ( json -- pos ) "x" "y" 2of ;
+: pos ( assoc -- pos ) "x" "y" 2of ; inline
 
 : wrap-pos ( pos dim -- pos' ) [ rem ] 2map ; inline
 
@@ -69,97 +72,80 @@ M: snake head body>> first ;
     '[ [ head _ member? ] reject ] map ; inline
 
 : hazards ( snake-moves state -- snake-moves' )
-    [ hazards>> ] [ damage>> ] bi '[
-        [
-            dup head _ [ = ] with count
-            _ * [ - ] curry change-health
-        ] map
-    ] map ; inline
+    [ hazards>> ] [ damage>> ] bi '[ [
+        dup head _ [ = ] with count
+        _ * [ - ] curry change-health
+    ] map ] map ; inline
 
 : food ( snake-moves state -- snake-moves' )
-    food>> '[
-        [
-            _ dup member? [
-                100 >>health
-                [ 1 + ] change-length
-            ] when
-        ] map
-    ] map ; inline
+    food>> '[ [
+        _ dup member? [
+            100 >>health
+            [ 1 + ] change-length
+        ] when
+    ] map ] map ; inline
 
 : out-of-health ( snake-moves -- snake-moves' )
     [ [ health>> 0 > ] filter ] map-harvest ; inline
 
 : snake-product ( snake-moves state -- snake-product )
-    [ <product-sequence> ] [ id>> ] bi* '[
+    [ <product-sequence> ] dip id>> '[
         [ id>> _ = ] any?
     ] filter ; inline
 
 : collate-moves ( snake-product state -- moves )
-    id>> '[
+    [ id>> ] [ dim>> ] bi '[
         [ id>> _ = ] find nip body>> first2 v-
+        _ [ [ 2 + ] dip rem 2 - ] 2map
     ] collect-by ; inline
 
 : head-collisions ( moves -- moves' )
-    [
-        [
-            [ head ] collect-by values [
-                [ length>> ] unique-supremum-by
-            ] map-sift
-        ] map
-    ] assoc-map ; inline
+    [ [
+        [ head ] collect-by values [
+            [ length>> ] unique-supremum-by
+        ] map-sift
+    ] map ] assoc-map ; inline
 
+DEFER: (score-moves)
 : scores ( depth moves state -- scores )
-    nipd id>> '[
+    [ swap 1 + ] dip [ id>> ] keep overd pick '[
         [
-            [ id>> _ = ] partition [ length ] bi@ neg 2array
-        ] map [
-            unzip [ supremum ] bi@
-        ] [
-            [ [ first ] map-sum ] [ length ] bi /
-        ] bi 3array
-    ] assoc-map ; inline
+            [ clone ] map
+            _ steps <= over [ id>> _ = ] any? and [
+                _ swap _ (score-moves) values ?supremum
+            ] [
+                [ id>> _ = ] partition [ length ] bi@ neg 2array
+            ] if
+        ] map-sift unzip [ mean ] bi@ 2array
+    ] assoc-map ;
 
 : (score-moves) ( depth snakes state -- scores )
-    {
-        [ drop move-damage ]
-        [ drop shorten-tails ]
+    [ move-damage shorten-tails ] dip {
         [
-            [ [ move-product ] [ check-borders ] bi ]
-            [ drop body-segments ] 2bi
+            [ [ move-product ] [ check-borders ] bi ] keepd
+            body-segments body-collisions
         ]
-        [ drop body-collisions ]
         [ hazards ]
-        [ food ]
-        [ drop out-of-health ]
+        [ food out-of-health ]
         [ snake-product ]
-        [ collate-moves ]
-        [ drop head-collisions ]
+        [ collate-moves head-collisions ]
         [ scores ]
-    } cleave ; inline
+    } cleave ;
 
 : score-moves* ( json -- depth snakes state )
-    1 swap [
-        "board" of [
-            "snakes" of [
-                [
-                    "id" "length" "health" [ of ] tri-curry@ tri
-                ] [
-                    "body" of [ pos ] map
-                ] bi <snake>
-            ] map
-        ] [
-            "width" "height" 2of
-        ] [
-            "food" "hazards" [ of [ pos ] map ] bi-curry@ bi
-        ] tri
-    ] [
-        "you" of "id" of
-    ] [
-        "game" of "ruleset" of [
-            "settings" of "hazardDamagePerTurn" of 0 or
-        ] [
-            "name" of "wrapped" =
-        ] bi
+    1 swap
+    [ "board" of
+        [ "snakes" of [
+            [ "id" "length" "health" [ of ] tri-curry@ tri ]
+            [ "body" of [ pos ] map ] bi <snake>
+        ] map ]
+        [ "width" "height" 2of ]
+        [ "food" "hazards" [ of [ pos ] map ] bi-curry@ bi ] tri
+    ]
+    [ "you" of "id" of ]
+    [ "game" of "ruleset" of
+        [ "settings" of "hazardDamagePerTurn" of 0 or ]
+        [ "name" of "wrapped" = ] bi
     ] tri <state> ; inline
 
 : score-moves ( json -- scores )
@@ -190,21 +176,22 @@ M: find-food heuristic ( from to astar -- n ) 3drop 1 ;
         [ _ v- [ abs ] map-sum ] call( x -- x )
     ] sort-with ; inline
 
+: best-moves ( json -- vs )
+    score-moves dup values ?supremum
+    '[ _ = ] filter-values keys ;
+
 : handle-move ( json -- v )
     {
         [ head ]
         [ nearest-food ]
         [ ]
-        [
-            score-moves dup values ?supremum
-            '[ _ = ] filter-values keys
-        ]
+        [ best-moves ]
     } cleave [
         '[
             _ <find-food> find-path ?first2 swap v-
             [ _ member? ] keep and
         ] with map-find drop
-    ] keep swap dup [ nip ] [ drop random ] if ; inline
+    ] keep over [ drop ] [ nip random ] if ; inline
 
 : <config-action> ( -- action )
     <action> [ config <json-content> ] >>display ;
