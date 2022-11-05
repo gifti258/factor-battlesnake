@@ -1,9 +1,9 @@
 USING: accessors arrays assocs assocs.extras combinators
 furnace.actions furnace.json hashtables http http.server
-http.server.dispatchers io.servers json.reader kernel logging
-math math.order math.statistics math.vectors namespaces
-pair-rocket path-finding random sequences sequences.extras
-sequences.product sorting ;
+http.server.dispatchers io io.servers json.reader kernel logging
+math math.functions math.order math.statistics math.vectors
+namespaces pair-rocket path-finding random sequences
+sequences.extras sequences.product shuffle sorting ;
 IN: battlesnake
 
 CONSTANT: config H{
@@ -19,8 +19,6 @@ CONSTANT: moves H{
     { 0 -1 } => "down"
     { +1 0 } => "right"
 }
-
-CONSTANT: steps 2
 
 TUPLE: snake id length health body ;
 C: <snake> snake
@@ -107,19 +105,20 @@ M: snake head body>> first ;
     ] map ] assoc-map ; inline
 
 DEFER: (score-moves)
-: scores ( depth moves state -- scores )
-    [ swap 1 + ] dip [ id>> ] keep overd pick '[
+: scores ( depth max-depth moves state -- scores )
+    [ 1 + ] 3dip [ id>> ] keep over '[
         [
             [ clone ] map
-            _ steps <= over [ id>> _ = ] any? and [
-                _ swap _ (score-moves) values ?supremum
+            2pick <= over [ id>> _ = ] any? and [
+                [ 2over ] dip _ (score-moves) values ?supremum
+                [ { 0 0 } ] unless*
             ] [
-                [ id>> _ = ] partition [ length ] bi@ neg 2array
+                [ id>> _ = ] partition [ length ] bi@ neg floor 2array
             ] if
-        ] map-sift unzip [ mean ] bi@ 2array
-    ] assoc-map ;
+        ] map unzip [ mean ] bi@ 2array
+    ] assoc-map 2nip ;
 
-: (score-moves) ( depth snakes state -- scores )
+: (score-moves) ( depth max-depth snakes state -- scores )
     [ move-damage shorten-tails ] dip {
         [
             [ [ move-product ] [ check-borders ] bi ] keepd
@@ -132,10 +131,10 @@ DEFER: (score-moves)
         [ scores ]
     } cleave ;
 
-: score-moves* ( json -- depth snakes state )
+: score-moves* ( json -- depth max-depth snakes state )
     1 swap
     [ "board" of
-        [ "snakes" of [
+        [ "snakes" of [ length 9 swap /i ] keep [
             [ "id" "length" "health" [ of ] tri-curry@ tri ]
             [ "body" of [ pos ] map ] bi <snake>
         ] map ]
@@ -209,6 +208,7 @@ M: find-food heuristic ( from to astar -- n ) 3drop 1 ;
         <config-action> "" add-responder
         <move-action> "move" add-responder
     main-responder set-global
+    "ready" print flush
     80 httpd wait-for-server ;
 
 MAIN: run-battlesnake
