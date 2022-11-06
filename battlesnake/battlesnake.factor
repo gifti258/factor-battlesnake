@@ -99,12 +99,12 @@ M: snake head body>> first ;
 : head-collisions ( moves state -- moves' )
     id>> '[
         [
-            dup [ head ] map all-unique? [ nip ] [
+            dup [ head ] map all-unique? [
                 [ head ] collect-by values [
                     [ body>> length ] unique-supremum-by
-                ] map-sift [ id>> _ = ] none?
-            ] if*
-        ] filter
+                ] map-sift dup [ id>> _ = ] none? swap and
+            ] unless
+        ] map-sift
     ] assoc-map ; inline
 
 DEFER: (score-moves)
