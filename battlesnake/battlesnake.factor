@@ -1,9 +1,9 @@
 USING: accessors arrays assocs assocs.extras combinators
 furnace.actions furnace.json hashtables http http.server
 http.server.dispatchers io io.servers json.reader kernel logging
-math math.functions math.order math.statistics math.vectors
-namespaces pair-rocket path-finding random sequences
-sequences.extras sequences.product shuffle sorting ;
+math math.order math.statistics math.vectors namespaces
+pair-rocket path-finding random sequences sequences.extras
+sequences.product sets shuffle sorting ;
 IN: battlesnake
 
 CONSTANT: config H{
@@ -20,7 +20,7 @@ CONSTANT: moves H{
     { +1 0 } => "right"
 }
 
-TUPLE: snake id length health body ;
+TUPLE: snake id health body ;
 C: <snake> snake
 
 TUPLE: state dim food hazards id damage wrapped? ;
@@ -79,7 +79,6 @@ M: snake head body>> first ;
     food>> '[ [
         _ dup member? [
             100 >>health
-            [ 1 + ] change-length
         ] when
     ] map ] map ; inline
 
@@ -97,12 +96,16 @@ M: snake head body>> first ;
         _ [ [ 2 + ] dip rem 2 - ] 2map
     ] collect-by ; inline
 
-: head-collisions ( moves -- moves' )
-    [ [
-        [ head ] collect-by values [
-            [ length>> ] unique-supremum-by
-        ] map-sift
-    ] map ] assoc-map ; inline
+: head-collisions ( moves state -- moves' )
+    id>> '[
+        [
+            dup [ head ] map all-unique? [ nip ] [
+                [ head ] collect-by values [
+                    [ body>> length ] unique-supremum-by
+                ] map-sift [ id>> _ = ] none?
+            ] if*
+        ] filter
+    ] assoc-map ; inline
 
 DEFER: (score-moves)
 : scores ( depth max-depth moves state -- scores )
@@ -111,9 +114,10 @@ DEFER: (score-moves)
             [ clone ] map
             2pick <= over [ id>> _ = ] any? and [
                 [ 2over ] dip _ (score-moves) values ?supremum
-                [ { 0 0 } ] unless*
+                [ { 0 -1/0. } ] unless*
             ] [
-                [ id>> _ = ] partition [ length ] bi@ neg floor 2array
+                [ id>> _ = ] partition
+                [ [ health>> ] map-sum ] bi@ neg 2array
             ] if
         ] map unzip [ mean ] bi@ 2array
     ] assoc-map 2nip ;
@@ -127,7 +131,8 @@ DEFER: (score-moves)
         [ hazards ]
         [ food out-of-health ]
         [ snake-product ]
-        [ collate-moves head-collisions ]
+        [ collate-moves ]
+        [ head-collisions ]
         [ scores ]
     } cleave ;
 
@@ -135,7 +140,7 @@ DEFER: (score-moves)
     1 swap
     [ "board" of
         [ "snakes" of [ length 9 swap /i ] keep [
-            [ "id" "length" "health" [ of ] tri-curry@ tri ]
+            [ "id" "health" [ of ] bi-curry@ bi ]
             [ "body" of [ pos ] map ] bi <snake>
         ] map ]
         [ "width" "height" 2of ]
@@ -166,7 +171,11 @@ M: find-food neighbors ( node astar -- seq )
         ] map concat '[ _ member? ] reject
     ] bi ;
 
-M: find-food cost ( from to astar -- n ) 3drop 1 ;
+M: find-food cost ( from to astar -- n )
+    nipd json>> [ "board" of "hazards" of ] [ {
+        "game" "ruleset" "settings"
+        "hazardDamagePerTurn"
+    } [ of ] each ] bi [ [ = ] with count ] dip * 1 + ;
 
 M: find-food heuristic ( from to astar -- n ) 3drop 1 ;
 
@@ -177,7 +186,7 @@ M: find-food heuristic ( from to astar -- n ) 3drop 1 ;
 
 : best-moves ( json -- vs )
     score-moves dup values ?supremum
-    '[ _ = ] filter-values keys ;
+    '[ _ = ] filter-values keys ; inline
 
 : handle-move ( json -- v )
     {
